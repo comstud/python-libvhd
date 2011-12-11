@@ -19,12 +19,14 @@ Module for interfacing with xen's vhd library.
 """
 
 import ctypes
+import ctypes.util
 import os
 import sys
 
 VHD_SECTOR_SIZE = 512
 
-libvhd_handle = ctypes.CDLL("libvhd.so", use_errno=True)
+libvhd_handle = ctypes.CDLL(ctypes.util.find_library("vhd"), use_errno=True)
+libc_handle = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 
 VHD_DISK_TYPES = {
         'fixed': 2,
@@ -201,7 +203,7 @@ class AlignedBuffer(object):
         default to the rest of the buffer.
         """
         p = self.get_pointer(offset=offset, size=size)
-        return p.contents.value
+        return ''.join(p.contents)
 
 
 class VHD(object):
@@ -265,6 +267,21 @@ class VHD(object):
         errno = ctypes.get_errno()
         raise VHDWriteError("Error writing: %s" % errno)
 
+    def io_read(self, buf, cur_sec, num_secs):
+        """Read sectors from a VHD into an aligned buffer."""
+        if not isinstance(buf, AlignedBuffer):
+            raise VHDInvalidBuffer("buf argument should be a AlignedBuffer"
+                    " instance")
+        ret = _call('vhd_io_read',
+                ctypes.pointer(self.vhd_context),
+                buf.get_pointer(),
+                ctypes.c_ulonglong(cur_sec),
+                ctypes.c_uint(num_secs))
+        if not ret:
+            return
+        errno = ctypes.get_errno()
+        raise VHDReadError("Error reading: %s" % errno)
+
     def __repr__(self):
         if self._closed:
             return "<%s: closed>" % self.filename
@@ -305,31 +322,36 @@ def vhd_create(filename, size, disk_type=None, create_flags=None):
             ctypes.c_uint(create_flags))
 
 
-def vhd_convert_from_raw(src_filename, dest_filename, sparse=False):
+def vhd_convert_from_raw(src_filename, dest_filename, disk_type=None,
+        sparse=False):
     """Convert a RAW disk image to a VHD."""
+
+    if disk_type is None:
+        disk_type = 'dynamic'
 
     size = os.stat(src_filename).st_size
     if size % VHD_SECTOR_SIZE:
         size += VHD_SECTOR_SIZE - (size % VHD_SECTOR_SIZE)
 
     cur_sec = 0
-    num_secs_to_read = 2 * 128
+    num_secs_to_read = 4096
     buf_size = VHD_SECTOR_SIZE * num_secs_to_read
     buf = AlignedBuffer(buf_size, alignment=VHD_SECTOR_SIZE)
 
     all_zero_sector = '\x00' * VHD_SECTOR_SIZE
 
-    def _write_sectors(data, start, end):
+    def _write_sectors(data, start, end, start_sec):
         buf.write(data[start:end])
         num_secs = (end - start) / VHD_SECTOR_SIZE
-        vhd.io_write(buf, cur_sec, num_secs)
+        vhd.io_write(buf, start_sec, num_secs)
 
     with open(src_filename, 'rb') as f:
-        vhd_create(dest_filename, size, 'dynamic')
+        fileno = f.fileno()
+        vhd_create(dest_filename, size, disk_type)
         vhd = VHD(dest_filename, 'rdwr')
 
         while True:
-            data = f.read(buf_size)
+            data = os.read(fileno, buf_size)
             if len(data) == 0:
                 break
             data_len = len(data)
@@ -347,7 +369,6 @@ def vhd_convert_from_raw(src_filename, dest_filename, sparse=False):
                 continue
 
             non_zero_start = None
-            non_zero_end = None
             for i in xrange(max_num):
                 beginning = i * VHD_SECTOR_SIZE
                 ending = beginning + VHD_SECTOR_SIZE
@@ -355,14 +376,40 @@ def vhd_convert_from_raw(src_filename, dest_filename, sparse=False):
                 if sector == all_zero_sector:
                     if non_zero_start is not None:
                         # We can write the previous sectors
-                        _write_sectors(data, non_zero_start, non_zero_end)
+                        _write_sectors(data, non_zero_start, non_zero_end,
+                                start_sec)
                         non_zero_start = None
                 else:
                     if non_zero_start is None:
                         # First non-zero sector
                         non_zero_start = beginning
+                        start_sec = cur_sec
                     non_zero_end = ending
                 cur_sec += 1
             if non_zero_start is not None:
-                _write_sectors(data, non_zero_start, non_zero_end)
+                _write_sectors(data, non_zero_start, non_zero_end, start_sec)
         vhd.close()
+
+
+def vhd_convert_to_raw(src_filename, dest_filename, sparse=False):
+    """Convert a VHD disk image to RAW."""
+
+    vhd = VHD(src_filename, 'rdonly')
+    file_size = vhd.get_footer()['curr_size']
+    total_sectors = file_size / VHD_SECTOR_SIZE
+
+    with open(dest_filename, 'wb') as f:
+        fileno = f.fileno()
+        cur_sec = 0
+        num_secs_to_read = 4096
+        buf_size = VHD_SECTOR_SIZE * num_secs_to_read
+        buf = AlignedBuffer(buf_size, alignment=VHD_SECTOR_SIZE)
+
+        while cur_sec < total_sectors:
+            if cur_sec + num_secs_to_read > total_sectors:
+                num_secs_to_read = total_sectors - cur_sec
+            vhd.io_read(buf, cur_sec, num_secs_to_read)
+            total_bytes = num_secs_to_read * VHD_SECTOR_SIZE
+            libc_handle.write(fileno, buf.get_pointer(), total_bytes)
+            cur_sec += num_secs_to_read
+    vhd.close()

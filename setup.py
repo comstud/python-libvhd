@@ -26,4 +26,5 @@ setup(name='python-libvhd',
         author_email='cbehrens@codestud.com',
         url='http://www.github.com/comstud/python-libvhd',
         packages=['libvhd'],
+        provides=['libvhd'],
         license='Apache 2.0')
