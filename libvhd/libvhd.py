@@ -26,7 +26,6 @@ import sys
 VHD_SECTOR_SIZE = 512
 
 libvhd_handle = ctypes.CDLL(ctypes.util.find_library("vhd"), use_errno=True)
-libc_handle = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 
 VHD_DISK_TYPES = {
         'fixed': 2,
@@ -203,7 +202,7 @@ class AlignedBuffer(object):
         default to the rest of the buffer.
         """
         p = self.get_pointer(offset=offset, size=size)
-        return ''.join(p.contents)
+        return p.contents.raw
 
 
 class VHD(object):
@@ -409,7 +408,8 @@ def vhd_convert_to_raw(src_filename, dest_filename, sparse=False):
             if cur_sec + num_secs_to_read > total_sectors:
                 num_secs_to_read = total_sectors - cur_sec
             vhd.io_read(buf, cur_sec, num_secs_to_read)
+            data = buf.read()
             total_bytes = num_secs_to_read * VHD_SECTOR_SIZE
-            libc_handle.write(fileno, buf.get_pointer(), total_bytes)
+            os.write(fileno, data)
             cur_sec += num_secs_to_read
     vhd.close()
