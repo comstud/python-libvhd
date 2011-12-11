@@ -15,7 +15,7 @@
 #    implied. See the License for the specific language governing
 #    permissions and limitations under the License.
 
-from distutils.core import setup, Extension
+from distutils.core import setup
 
 package_dir = {'' : 'libvhd'}
 
