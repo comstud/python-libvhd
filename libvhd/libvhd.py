@@ -280,7 +280,7 @@ def _call(fn_name, *args):
 
 
 def vhd_create(filename, size, disk_type=None, create_flags=None):
-    """Usage: <filename> <size> [<disk_type>] [<create_flags>]"""
+    """Create a new empty VHD file."""
 
     if disk_type is None:
         disk_type = 'dynamic'
@@ -305,14 +305,8 @@ def vhd_create(filename, size, disk_type=None, create_flags=None):
             ctypes.c_uint(create_flags))
 
 
-def vhd_convert_from_raw(src_filename, dest_filename, sparse=None):
-    """Usage: <src_filename> <dest_filename> [<0|1>]"""
-    """Arguments: 1 == Sparse"""
-
-    if sparse == '1':
-        sparse = 1
-    else:
-        sparse = 0
+def vhd_convert_from_raw(src_filename, dest_filename, sparse=False):
+    """Convert a RAW disk image to a VHD."""
 
     size = os.stat(src_filename).st_size
     if size % VHD_SECTOR_SIZE:
