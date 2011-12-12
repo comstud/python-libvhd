@@ -194,7 +194,7 @@ class AlignedBuffer(object):
         where the offset defaults to 0.
         """
         p = self.get_pointer(offset=offset)
-        p.contents.value = data
+        p.contents.raw = data
 
     def read(self, offset=0, size=None):
         """Return data from the buffer at a specific offset.  An optional
